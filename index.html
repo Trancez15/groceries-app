@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Groceries Tracker 采购与价格追踪</title>
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/htm@3.1.1/dist/htm.umd.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<style>
+:root{--bg:#f4f5f2;--card:#fff;--tx:#1c1f1a;--mut:#6b7167;--bd:#e2e5dd;--ac:#15803d;--acs:#dcfce7;--onac:#fff;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121411;--card:#1c1f1a;--tx:#ecefe8;--mut:#9aa194;--bd:#2c3029;--ac:#4ade80;--acs:#163a22;--onac:#0b1f10;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#121411;--card:#1c1f1a;--tx:#ecefe8;--mut:#9aa194;--bd:#2c3029;--ac:#4ade80;--acs:#163a22;--onac:#0b1f10;color-scheme:dark}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+html,body,#root{height:100%}
+body{margin:0;background:var(--bg);color:var(--tx);font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans SC","Segoe UI",sans-serif}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:16px}
+.btn{min-height:48px;border-radius:14px;font-weight:600;padding:0 16px;background:var(--ac);color:var(--onac)}
+.btn2{min-height:48px;border-radius:14px;font-weight:600;padding:0 16px;background:var(--acs);color:var(--ac)}
+.inp{min-height:46px;border:1px solid var(--bd);border-radius:12px;padding:0 12px;background:var(--bg);color:var(--tx);width:100%;font-size:16px}
+.mut{color:var(--mut)}
+.chip{min-height:38px;padding:0 14px;border-radius:999px;border:1px solid var(--bd);white-space:nowrap;background:var(--card)}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+const {useState,useEffect,useRef}=React;
+const html=htm.bind((t,p,...c)=>{if(p&&p.class){p={...p,className:p.class};delete p.class}return React.createElement(t,p,...c)});
+const KEY="gt_v1",CATS=["生鲜蔬果","粮油调味","乳品烘焙","日用清洁","零食饮料"];
+const DEFAULT_URL="https://script.google.com/macros/s/AKfycbyYwD6f_I4sB-7y2Y9xfwAzvNgauJbF8yo2HWXL5pO9IW_OTd1-pHYv2zjus7qE6PLpGg/exec";
+const DEF={users:["Member 1","Member 2","Member 3"],userIdx:0,outbox:[]};
+const STORES=["Jaya Grocer","Village Grocer","Lotus’s","99 Speedmart","AEON"];
+const uid=()=>Math.random().toString(36).slice(2,9);
+const rm=n=>n==null?"—":"RM "+n.toFixed(2);
+const ago=n=>new Date(Date.now()-n*864e5).toISOString();
+function seed(){
+const S=[
+["Dutch Lady 全脂牛奶","乳品烘焙","1L","9556001001012",1,[["Jaya Grocer",8.9,40],["99 Speedmart",7.99,20],["Lotus’s",7.49,5]]],
+["Saji 食用油","粮油调味","2kg","9556002002029",0,[["AEON",13.9,35],["Lotus’s",12.5,12]]],
+["Gardenia 白面包","乳品烘焙","400g","9556003003036",1,[["99 Speedmart",3.6,25],["Village Grocer",4.2,9]]],
+["Maggi 咖喱面","零食饮料","5 包装","9556004004043",0,[["Lotus’s",5.2,30],["99 Speedmart",4.9,8]]],
+["鸡蛋 Grade A","生鲜蔬果","30 粒","",1,[["Lotus’s",15.5,28],["Jaya Grocer",17.9,14],["99 Speedmart",15.2,3]]],
+["菜心 Choy Sum","生鲜蔬果","约 500g","",0,[["Village Grocer",4.5,18],["Lotus’s",3.8,6]]],
+["Dynamo 洗衣液","日用清洁","3.6kg","9556005005050",1,[["AEON",39.9,45],["Lotus’s",34.9,10]]],
+["100plus 汽水","零食饮料","6 罐","9556006006067",0,[["99 Speedmart",8.9,22],["Lotus’s",8.5,7]]]];
+const items=[],records=[];
+S.forEach((s,k)=>{const id="s"+k;items.push({id,name:s[0],cat:s[1],spec:s[2],barcode:s[3],oos:!!s[4]});s[5].forEach((r,j)=>records.push({id:id+"r"+j,itemId:id,store:r[0],price:r[1],date:ago(r[2]),note:""}))});
+return{...DEF,items,records,trip:{},webhook:DEFAULT_URL,last:STORES[0]}}
+function load(){try{const s=localStorage.getItem(KEY);if(s){const o={...DEF,...JSON.parse(s)};if(!o.webhook)o.webhook=DEFAULT_URL;return o}}catch(e){}return seed()}
+function stats(id,recs){const r=recs.filter(x=>x.itemId===id);if(!r.length)return{n:0};
+const s=[...r].sort((a,b)=>b.date.localeCompare(a.date)),m=r.reduce((a,b)=>b.price<a.price?b:a);
+return{n:r.length,latest:s[0].price,avg:r.reduce((a,b)=>a+b.price,0)/r.length,min:m.price,minStore:m.store}}
+async function call(u,b){const r=await fetch(u,{method:"POST",redirect:"follow",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(b)});const j=await r.json();if(!j.ok)throw new Error("x");return j}
+async function pullCloud(u){const r=await fetch(u+(u.includes("?")?"&":"?")+"action=pull&t="+Date.now(),{redirect:"follow"});return r.json()}
+
+const St=({l,v})=>html`<div class="text-center"><div class="text-xs mut">${l}</div><div class="font-bold text-sm">${v}</div></div>`;
+const Sw=({on,f})=>html`<button onClick=${f} aria-label="缺货开关" class="relative shrink-0 rounded-full" style=${{width:60,height:34,background:on?"#dc2626":"var(--bd)"}}><span class="absolute rounded-full bg-white" style=${{top:4,width:26,height:26,left:on?30:4,transition:"left .15s"}}></span></button>`;
+function StoreSel({value,onChange}){const c=!STORES.includes(value);
+return html`<div class="grid gap-2"><select class="inp" value=${c?"__c":value} onChange=${e=>onChange(e.target.value==="__c"?"":e.target.value)}>${STORES.map(s=>html`<option key=${s} value=${s}>${s}</option>`)}<option value="__c">自定义…</option></select>${c&&html`<input class="inp" placeholder="输入超市名称" value=${value} onInput=${e=>onChange(e.target.value)}/>`}</div>`}
+const Modal=({close,children})=>html`<div class="fixed inset-0 flex items-end z-20" style=${{background:"rgba(0,0,0,.5)"}} onClick=${close}><div class="card w-full max-w-md mx-auto p-4 overflow-y-auto" style=${{maxHeight:"90%",borderRadius:"20px 20px 0 0",paddingBottom:"calc(16px + env(safe-area-inset-bottom,0px))"}} onClick=${e=>e.stopPropagation()}>${children}</div></div>`;
+
+function List({d,upd,rec,flash}){
+const oos=d.items.filter(i=>i.oos);
+const setT=(id,p)=>upd(s=>({trip:{...s.trip,[id]:{...s.trip[id],...p}}}));
+const done=()=>{const ch=oos.filter(i=>d.trip[i.id]&&d.trip[i.id].checked);
+if(!ch.length)return flash("请先勾选已买商品");
+const bad=ch.find(i=>!(parseFloat(d.trip[i.id].price)>0));if(bad)return flash("请填写「"+bad.name+"」的单价");
+rec(ch.map(i=>({itemId:i.id,price:parseFloat(d.trip[i.id].price),store:d.trip[i.id].store===undefined?d.last:d.trip[i.id].store,note:""})),true);
+upd(()=>({trip:{}}));flash("已记录 "+ch.length+" 项，缺货已取消")};
+const n=oos.filter(i=>(d.trip[i.id]||{}).checked).length;
+return html`<div class="grid gap-3 pb-2">
+<div class="text-sm mut">缺货商品 ${oos.length} 项 · 已勾选 ${n} 项</div>
+${!oos.length&&html`<div class="card p-6 text-center mut">清单是空的 🎉<br/>在「物品总表」把商品切换为缺货即可加入</div>`}
+${oos.map(i=>{const t=d.trip[i.id]||{},s=stats(i.id,d.records);return html`<div key=${i.id} class="card p-3">
+<div class="flex items-center gap-3">
+<button onClick=${()=>setT(i.id,{checked:!t.checked})} class="shrink-0 grid place-items-center rounded-full text-lg" style=${{width:40,height:40,border:"2px solid var(--ac)",background:t.checked?"var(--ac)":"transparent",color:"var(--onac)"}}>${t.checked?"✓":""}</button>
+<div class="flex-1 min-w-0"><div class="font-semibold">${i.name}</div><div class="text-xs mut">${i.spec||""}${i.spec?" · ":""}均价 ${rm(s.avg)} · 最低 ${rm(s.min)}${s.minStore?"（"+s.minStore+"）":""}</div></div></div>
+${t.checked&&html`<div class="mt-3 grid gap-2"><input class="inp" inputmode="decimal" placeholder="本次单价 RM" value=${t.price||""} onInput=${e=>setT(i.id,{price:e.target.value})}/><${StoreSel} value=${t.store===undefined?d.last:t.store} onChange=${v=>setT(i.id,{store:v})}/></div>`}</div>`})}
+${oos.length>0&&html`<button class="btn w-full text-base" style=${{minHeight:56}} onClick=${done}>完成本次采购（${n}）</button>`}</div>`}
+
+function Quick({i,d,rec,flash,toggle}){const s=stats(i.id,d.records);const [p,setP]=useState("");const [st,setSt]=useState(d.last);const [nt,setNt]=useState("");
+const go=()=>{if(!(parseFloat(p)>0))return flash("请输入有效单价");rec([{itemId:i.id,price:parseFloat(p),store:st,note:nt}]);setP("");setNt("");flash("已记录价格")};
+return html`<div class="card p-4 grid gap-3">
+<div><div class="font-bold text-base">${i.name}</div><div class="text-xs mut">${i.cat} · ${i.spec||"无规格"} · ${i.barcode||"无条码"}</div></div>
+<div class="grid grid-cols-4 gap-1"><${St} l="最新" v=${rm(s.latest)}/><${St} l="最低" v=${rm(s.min)}/><${St} l="均价" v=${rm(s.avg)}/><${St} l="最便宜" v=${s.minStore||"—"}/></div>
+<input class="inp" inputmode="decimal" placeholder="本次单价 RM" value=${p} onInput=${e=>setP(e.target.value)}/>
+<${StoreSel} value=${st} onChange=${setSt}/>
+<input class="inp" placeholder="备注（可选）" value=${nt} onInput=${e=>setNt(e.target.value)}/>
+<div class="grid grid-cols-2 gap-2"><button class="btn" onClick=${go}>记录价格</button>
+<button class="btn2" onClick=${()=>{toggle(i.id);flash(i.oos?"已移出采购清单":"已加入采购清单")}}>${i.oos?"移出清单":"加入清单"}</button></div></div>`}
+
+function Scan({d,rec,flash,setModal,toggle}){
+const [q,setQ]=useState("");const [on,setOn]=useState(false);const sc=useRef(null);
+const stop=async()=>{try{if(sc.current){await sc.current.stop();sc.current.clear()}}catch(e){}sc.current=null;setOn(false)};
+const start=()=>{setOn(true);setTimeout(async()=>{try{const s=new Html5Qrcode("rd");sc.current=s;await s.start({facingMode:"environment"},{fps:10,qrbox:{width:250,height:140}},t=>{setQ(t);stop()},()=>{})}catch(e){sc.current=null;setOn(false);flash("无法打开摄像头，请手动输入")}},60)};
+useEffect(()=>()=>{if(sc.current)sc.current.stop().catch(()=>{})},[]);
+const k=q.trim(),kl=k.toLowerCase(),isCode=/^\d{6,}$/.test(k);
+const hit=k?d.items.filter(i=>i.barcode===k||i.name.toLowerCase().includes(kl)||(k.length>=4&&i.barcode&&i.barcode.includes(k))):[];
+return html`<div class="grid gap-3 pb-2">
+${on?html`<div class="card p-2"><div id="rd" style=${{width:"100%"}}></div><button class="btn2 w-full mt-2" onClick=${stop}>关闭摄像头</button></div>`:html`<button class="btn w-full text-base" style=${{minHeight:56}} onClick=${start}>📷 扫描条形码</button>`}
+<input class="inp" placeholder="手动输入条码，或搜索商品名" value=${q} onInput=${e=>setQ(e.target.value)}/>
+${k&&hit.map(i=>html`<${Quick} key=${i.id} i=${i} d=${d} rec=${rec} flash=${flash} toggle=${toggle}/>`)}
+${k&&!hit.length&&html`<div class="card p-4 grid gap-3 text-center"><div class="mut">${isCode?"条码 "+k+" 尚未收录":"没有找到「"+k+"」"}</div><button class="btn" onClick=${()=>setModal({t:"item",init:isCode?{barcode:k}:{name:k}})}>＋ 新建商品${isCode?"并绑定条码":""}</button></div>`}
+${!k&&html`<div class="text-center text-sm mut p-4">扫码或输入后，这里会显示历史比价卡片</div>`}</div>`}
+
+function ItemsTab({d,toggle,setModal}){
+const [c,setC]=useState("全部");const [q,setQ]=useState("");
+const rows=d.items.filter(i=>(c==="全部"||i.cat===c)&&(!q||(i.name+(i.barcode||"")+(i.spec||"")).toLowerCase().includes(q.toLowerCase())));
+return html`<div class="grid gap-3 pb-2">
+<div class="flex gap-2"><input class="inp" placeholder="搜索名称 / 条码" value=${q} onInput=${e=>setQ(e.target.value)}/><button class="btn shrink-0" onClick=${()=>setModal({t:"item",init:{}})}>＋新建</button></div>
+<div class="flex gap-2 overflow-x-auto pb-1">${["全部",...CATS].map(x=>html`<button key=${x} class="chip" style=${c===x?{background:"var(--ac)",color:"var(--onac)",borderColor:"var(--ac)"}:{}} onClick=${()=>setC(x)}>${x}</button>`)}</div>
+${!rows.length&&html`<div class="card p-6 text-center mut">没有符合的商品</div>`}
+${rows.map(i=>{const s=stats(i.id,d.records);return html`<div key=${i.id} class="card p-3 grid gap-2">
+<div class="flex items-start gap-2"><div class="flex-1 min-w-0"><div class="font-semibold">${i.name}</div><div class="text-xs mut">${i.cat} · ${i.spec||"无规格"} · ${i.barcode||"无条码"}</div></div>
+<button class="text-sm px-2 min-h-[40px]" style=${{color:"var(--ac)"}} onClick=${()=>setModal({t:"item",init:i})}>编辑</button></div>
+<div class="grid grid-cols-3 gap-1"><${St} l="最新" v=${rm(s.latest)}/><${St} l="平均" v=${rm(s.avg)}/><${St} l="最低" v=${rm(s.min)}/></div>
+<div class="flex items-center justify-between"><span class="text-sm" style=${{color:i.oos?"#dc2626":"var(--mut)"}}>${i.oos?"缺货 · 在采购清单":"有货"}</span><${Sw} on=${i.oos} f=${()=>toggle(i.id)}/></div></div>`})}</div>`}
+
+function Hist({d,delRec,flash}){const [dl,setDl]=useState(null);
+const rows=[...d.records].sort((a,b)=>b.date.localeCompare(a.date));
+return html`<div class="grid gap-2 pb-2">
+<div class="text-sm mut">共 ${rows.length} 条记录</div>
+${!rows.length&&html`<div class="card p-6 text-center mut">还没有购买记录</div>`}
+${rows.map(r=>{const it=d.items.find(i=>i.id===r.itemId);return html`<div key=${r.id} class="card p-3 flex items-center gap-3">
+<div class="flex-1 min-w-0"><div class="font-semibold">${it?it.name:"（已删除商品）"}</div><div class="text-xs mut">${r.date.slice(0,10)} · ${r.store||"未填"}${r.buyer?" · 👤"+r.buyer:""}${r.note?" · "+r.note:""}</div></div>
+<div class="font-bold">${rm(r.price)}</div>
+<button class="shrink-0 text-sm px-2 min-h-[40px]" style=${{color:dl===r.id?"#dc2626":"var(--mut)"}} onClick=${()=>{if(dl===r.id){delRec(r.id);setDl(null);flash("已删除")}else setDl(r.id)}}>${dl===r.id?"确认删除":"删除"}</button></div>`})}</div>`}
+
+function ItemForm({init,saveItem,delItem,close,flash}){
+const [f,setF]=useState({name:"",cat:CATS[0],spec:"",barcode:"",...init});const [dl,setDl]=useState(false);
+const set=k=>e=>setF({...f,[k]:e.target.value});
+const save=()=>{if(!f.name.trim())return flash("请填写商品名称");const it={...f,name:f.name.trim(),barcode:(f.barcode||"").trim()};
+saveItem(it);close();flash("已保存")};
+return html`<div class="grid gap-3"><div class="font-bold text-lg">${f.id?"编辑商品":"新建商品"}</div>
+<input class="inp" placeholder="商品名称" value=${f.name} onInput=${set("name")}/>
+<select class="inp" value=${f.cat} onChange=${set("cat")}>${CATS.map(c=>html`<option key=${c} value=${c}>${c}</option>`)}</select>
+<input class="inp" placeholder="规格备注（如 1L / 500g）" value=${f.spec||""} onInput=${set("spec")}/>
+<input class="inp" inputmode="numeric" placeholder="条形码（可选）" value=${f.barcode||""} onInput=${set("barcode")}/>
+<div class="grid grid-cols-2 gap-2"><button class="btn2" onClick=${close}>取消</button><button class="btn" onClick=${save}>保存</button></div>
+${f.id&&html`<button class="min-h-[44px] text-sm" style=${{color:"#dc2626"}} onClick=${()=>{if(dl){delItem(f.id);close();flash("已删除商品")}else setDl(true)}}>${dl?"确认删除（同时删除其购买记录）":"删除此商品"}</button>`}</div>`}
+
+function Settings({d,upd,close,flash,pull,cloud}){
+const [u,setU]=useState(d.webhook||"");const [out,setOut]=useState("");
+const rows=()=>d.records.map(r=>({date:r.date.slice(0,10),item:(d.items.find(i=>i.id===r.itemId)||{}).name||"",store:r.store,price:r.price,note:r.note||"",buyer:r.buyer||""}));
+const csv=()=>["日期,物品,超市,单价RM,备注,购买人",...rows().map(r=>[r.date,r.item,r.store,r.price,r.note,r.buyer].map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(","))].join("\n");
+const copy=()=>(navigator.clipboard?navigator.clipboard.writeText(out):Promise.reject()).then(()=>flash("已复制"),()=>flash("请长按文本框全选复制"));
+return html`<div class="grid gap-3"><div class="font-bold text-lg">设置 / 数据同步</div>
+<div class="font-semibold">当前操作人（可改名）</div>
+${d.users.map((n,i)=>html`<div key=${i} class="flex gap-2 items-center"><button onClick=${()=>upd(()=>({userIdx:i}))} class="shrink-0 grid place-items-center rounded-full" style=${{width:40,height:40,border:"2px solid var(--ac)",background:d.userIdx===i?"var(--ac)":"transparent",color:"var(--onac)"}}>${d.userIdx===i?"✓":""}</button><input class="inp" value=${n} onInput=${e=>upd(p=>({users:p.users.map((x,j)=>j===i?e.target.value:x)}))}/></div>`)}
+<div class="text-sm mut">数据保存在本机浏览器。备份：生成后复制保存到备忘录或文件。</div>
+<div class="grid grid-cols-2 gap-2"><button class="btn2" onClick=${()=>setOut(JSON.stringify({items:d.items,records:d.records},null,1))}>导出 JSON</button><button class="btn2" onClick=${()=>setOut(csv())}>导出 CSV</button></div>
+${out&&html`<textarea readOnly class="inp" style=${{height:130,padding:10}} value=${out} onFocus=${e=>e.target.select()}></textarea>`}
+${out&&html`<button class="btn" onClick=${copy}>复制到剪贴板</button>`}
+<div class="font-semibold mt-2">Google Apps Script Webhook URL</div>
+<input class="inp" placeholder="https://script.google.com/macros/s/…/exec" value=${u} onInput=${e=>setU(e.target.value)}/>
+<div class="text-xs mut">部署 Apps Script 后粘贴 /exec 网址，三人填同一个即可共享。${cloud||""}${d.outbox.length?" · 待上传 "+d.outbox.length+" 条":""}</div>
+<div class="grid grid-cols-2 gap-2"><button class="btn2" onClick=${()=>{const v=u.trim();upd(()=>({webhook:v}));pull(v)}}>保存并云端刷新</button><button class="btn" onClick=${()=>{upd(()=>({webhook:u}));close();flash("已保存")}}>保存</button></div></div>`}
+
+const TABS=[["🛒","采购清单"],["📷","扫码录入"],["📦","物品总表"],["🧾","购买记录"]];
+function App(){
+const [d,setD]=useState(load);const [tab,setTab]=useState(0);const [modal,setModal]=useState(null);const [toast,setToast]=useState("");const [cloud,setCloud]=useState("");const [busy,setBusy]=useState(false);
+useEffect(()=>{try{localStorage.setItem(KEY,JSON.stringify(d))}catch(e){}},[d]);
+const upd=f=>setD(p=>({...p,...f(p)}));
+const flash=m=>{setToast(m);setTimeout(()=>setToast(""),2000)};
+const dRef=useRef(d);dRef.current=d;
+const user=d.users[d.userIdx]||"Member";
+const send=async a=>{const u=dRef.current.webhook;if(!u)return;try{await call(u,a)}catch(e){upd(p=>({outbox:[...p.outbox,a]}));setCloud("⚠️ 离线，已排队")}};
+const pull=async u0=>{const u=u0||dRef.current.webhook;if(!u)return;setBusy(true);
+try{const q=dRef.current.outbox;for(const a of q)await call(u,a);
+const j=await pullCloud(u);if(!j.ok)throw new Error("x");
+if(!j.items.length&&!j.records.length&&dRef.current.items.length){await call(u,{action:"importAll",items:dRef.current.items,records:dRef.current.records});upd(p=>({outbox:p.outbox.slice(q.length)}))}
+else upd(p=>({items:j.items,records:j.records,outbox:p.outbox.slice(q.length)}));
+setCloud("☁️ 已同步 "+new Date().toTimeString().slice(0,5))}catch(e){setCloud("⚠️ 云端不可用，使用本地缓存")}setBusy(false)};
+useEffect(()=>{pull()},[tab]);
+const rec=(list,clear)=>{const recs=list.map(x=>({id:uid(),itemId:x.itemId,price:x.price,store:x.store||"未填",note:x.note||"",date:new Date().toISOString(),buyer:user}));
+upd(p=>({records:[...p.records,...recs],last:recs[recs.length-1].store,items:clear?p.items.map(i=>recs.some(r=>r.itemId===i.id)?{...i,oos:false}:i):p.items}));
+send({action:clear?"completePurchase":"addRecord",clearStock:!!clear,records:recs.map(r=>({...r,itemName:(d.items.find(i=>i.id===r.itemId)||{}).name||""}))})};
+const toggle=id=>{const i=d.items.find(x=>x.id===id);if(!i)return;upd(p=>({items:p.items.map(x=>x.id===id?{...x,oos:!i.oos}:x)}));send({action:"toggleStock",id,oos:!i.oos,by:user})};
+const saveItem=it=>{const o=d.items.find(x=>x.id===it.id);const n={id:it.id||uid(),name:it.name,cat:it.cat,spec:it.spec||"",barcode:it.barcode||"",oos:o?o.oos:false};
+upd(p=>({items:o?p.items.map(x=>x.id===n.id?{...x,...n}:x):[...p.items,n]}));send({action:"saveItem",item:n,by:user})};
+const delItem=id=>{upd(p=>({items:p.items.filter(x=>x.id!==id),records:p.records.filter(x=>x.itemId!==id)}));send({action:"deleteItem",id})};
+const delRec=id=>{upd(p=>({records:p.records.filter(x=>x.id!==id)}));send({action:"deleteRecord",id})};
+const P={d,upd,rec,flash,setModal,toggle,delRec};
+const cnt=d.items.filter(i=>i.oos).length;
+return html`<div class="flex flex-col h-full max-w-md mx-auto">
+<header class="flex items-center justify-between px-4 py-2"><div class="min-w-0" onClick=${()=>setModal({t:"set"})}><h1 class="text-lg font-bold">${TABS[tab][0]} ${TABS[tab][1]}</h1><div class="text-xs mut truncate">👤 ${user} · ${d.webhook?(cloud||"☁️ 连接中…"):"未连接云端"}${d.outbox.length?" · 待传 "+d.outbox.length:""}</div></div><div class="flex shrink-0"><button class=${"text-2xl"+(busy?" animate-spin":"")} style=${{width:44,height:44}} aria-label="云端刷新" onClick=${()=>pull()}>🔄</button><button class="text-2xl" style=${{width:44,height:44}} aria-label="设置" onClick=${()=>setModal({t:"set"})}>⚙️</button></div></header>
+<main class="flex-1 overflow-y-auto px-4 pb-4">${tab===0&&html`<${List} ...${P}/>`}${tab===1&&html`<${Scan} ...${P}/>`}${tab===2&&html`<${ItemsTab} ...${P}/>`}${tab===3&&html`<${Hist} ...${P}/>`}</main>
+<nav class="grid grid-cols-4" style=${{borderTop:"1px solid var(--bd)",background:"var(--card)"}}>${TABS.map((t,i)=>html`<button key=${i} onClick=${()=>setTab(i)} class="flex flex-col items-center justify-center relative" style=${{height:64,color:tab===i?"var(--ac)":"var(--mut)",fontWeight:tab===i?700:400}}><span class="text-2xl leading-none">${t[0]}</span><span class="text-xs mt-1">${t[1]}</span>${i===0&&cnt>0&&html`<span class="absolute rounded-full text-xs px-1.5" style=${{top:6,right:"22%",background:"#dc2626",color:"#fff"}}>${cnt}</span>`}</button>`)}</nav>
+${modal&&html`<${Modal} close=${()=>setModal(null)}>${modal.t==="item"?html`<${ItemForm} init=${modal.init} saveItem=${saveItem} delItem=${delItem} flash=${flash} close=${()=>setModal(null)}/>`:html`<${Settings} d=${d} upd=${upd} flash=${flash} pull=${pull} cloud=${cloud} close=${()=>setModal(null)}/>`}<//>`}
+${toast&&html`<div class="fixed left-1/2 z-30 px-4 py-2 rounded-full text-sm" style=${{transform:"translateX(-50%)",bottom:"calc(84px + env(safe-area-inset-bottom,0px))",background:"var(--tx)",color:"var(--bg)"}}>${toast}</div>`}</div>`}
+ReactDOM.createRoot(document.getElementById("root")).render(html`<${App}/>`);
+</script>
+</body>
+</html>
