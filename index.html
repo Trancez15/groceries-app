@@ -53,8 +53,8 @@ function load(){try{const s=localStorage.getItem(KEY);if(s){const o={...DEF,...J
 function stats(id,recs){const r=recs.filter(x=>x.itemId===id);if(!r.length)return{n:0};
 const s=[...r].sort((a,b)=>b.date.localeCompare(a.date)),m=r.reduce((a,b)=>b.price<a.price?b:a);
 return{n:r.length,latest:s[0].price,avg:r.reduce((a,b)=>a+b.price,0)/r.length,min:m.price,minStore:m.store}}
-async function call(u,b){const r=await fetch(u,{method:"POST",redirect:"follow",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(b)});const j=await r.json();if(!j.ok)throw new Error("x");return j}
-async function pullCloud(u){const r=await fetch(u+(u.includes("?")?"&":"?")+"action=pull&t="+Date.now(),{redirect:"follow"});return r.json()}
+async function call(u,b){const r=await fetch(u,{method:"POST",redirect:"follow",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(b)});const t=await r.text();let j;try{j=JSON.parse(t)}catch(e){throw new Error("POST 返回的不是 JSON："+t.replace(/\s+/g," ").slice(0,60))}if(!j.ok)throw new Error("服务端："+(j.error||"失败"));return j}
+async function pullCloud(u){const r=await fetch(u+(u.includes("?")?"&":"?")+"action=pull&t="+Date.now(),{redirect:"follow"});const t=await r.text();try{return JSON.parse(t)}catch(e){throw new Error("GET 返回的不是 JSON："+t.replace(/\s+/g," ").slice(0,60))}}
 
 const St=({l,v})=>html`<div class="text-center"><div class="text-xs mut">${l}</div><div class="font-bold text-sm">${v}</div></div>`;
 const Sw=({on,f})=>html`<button onClick=${f} aria-label="缺货开关" class="relative shrink-0 rounded-full" style=${{width:60,height:34,background:on?"#dc2626":"var(--bd)"}}><span class="absolute rounded-full bg-white" style=${{top:4,width:26,height:26,left:on?30:4,transition:"left .15s"}}></span></button>`;
@@ -143,7 +143,12 @@ return html`<div class="grid gap-3"><div class="font-bold text-lg">${f.id?"编�
 ${f.id&&html`<button class="min-h-[44px] text-sm" style=${{color:"#dc2626"}} onClick=${()=>{if(dl){delItem(f.id);close();flash("已删除商品")}else setDl(true)}}>${dl?"确认删除（同时删除其购买记录）":"删除此商品"}</button>`}</div>`}
 
 function Settings({d,upd,close,flash,pull,cloud}){
-const [u,setU]=useState(d.webhook||"");const [out,setOut]=useState("");
+const [u,setU]=useState(d.webhook||"");const [out,setOut]=useState("");const [diag,setDiag]=useState("");
+const em=e=>e.message+(/fetch|Load failed|Network/i.test(e.message)?"（被浏览器拦截：网络、跨域或权限）":"");
+const test=async()=>{const v=u.trim();if(!v)return flash("请先填写网址");let m="页面来源："+location.origin+"\n";setDiag("测试中…");
+try{const j=await pullCloud(v);m+="GET ✅ 物品 "+j.items.length+" · 记录 "+j.records.length+"\n"}catch(e){m+="GET ❌ "+em(e)+"\n"}
+try{await call(v,{action:"ping"})}catch(e){m+=e.message.startsWith("服务端")?"POST ✅ 可达（"+e.message+"）":"POST ❌ "+em(e)}
+setDiag(m)};
 const rows=()=>d.records.map(r=>({date:r.date.slice(0,10),item:(d.items.find(i=>i.id===r.itemId)||{}).name||"",store:r.store,price:r.price,note:r.note||"",buyer:r.buyer||""}));
 const csv=()=>["日期,物品,超市,单价RM,备注,购买人",...rows().map(r=>[r.date,r.item,r.store,r.price,r.note,r.buyer].map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(","))].join("\n");
 const copy=()=>(navigator.clipboard?navigator.clipboard.writeText(out):Promise.reject()).then(()=>flash("已复制"),()=>flash("请长按文本框全选复制"));
@@ -157,7 +162,10 @@ ${out&&html`<button class="btn" onClick=${copy}>复制到剪贴板</button>`}
 <div class="font-semibold mt-2">Google Apps Script Webhook URL</div>
 <input class="inp" placeholder="https://script.google.com/macros/s/…/exec" value=${u} onInput=${e=>setU(e.target.value)}/>
 <div class="text-xs mut">部署 Apps Script 后粘贴 /exec 网址，三人填同一个即可共享。${cloud||""}${d.outbox.length?" · 待上传 "+d.outbox.length+" 条":""}</div>
-<div class="grid grid-cols-2 gap-2"><button class="btn2" onClick=${()=>{const v=u.trim();upd(()=>({webhook:v}));pull(v)}}>保存并云端刷新</button><button class="btn" onClick=${()=>{upd(()=>({webhook:u}));close();flash("已保存")}}>保存</button></div></div>`}
+<div class="grid grid-cols-2 gap-2"><button class="btn2" onClick=${()=>{const v=u.trim();upd(()=>({webhook:v}));pull(v)}}>保存并云端刷新</button><button class="btn" onClick=${()=>{upd(()=>({webhook:u}));close();flash("已保存")}}>保存</button></div>
+<button class="btn2" onClick=${test}>🔍 测试连接</button>
+${diag&&html`<pre class="card p-2 text-xs" style=${{whiteSpace:"pre-wrap",wordBreak:"break-all"}}>${diag}</pre>`}
+${d.outbox.length>0&&html`<button class="text-sm" style=${{minHeight:44,color:"#dc2626"}} onClick=${()=>{upd(()=>({outbox:[]}));flash("已清空待传队列")}}>清空待传队列（${d.outbox.length}）</button>`}</div>`}
 
 const TABS=[["🛒","采购清单"],["📷","扫码录入"],["📦","物品总表"],["🧾","购买记录"]];
 function App(){
@@ -169,11 +177,11 @@ const dRef=useRef(d);dRef.current=d;
 const user=d.users[d.userIdx]||"Member";
 const send=async a=>{const u=dRef.current.webhook;if(!u)return;try{await call(u,a)}catch(e){upd(p=>({outbox:[...p.outbox,a]}));setCloud("⚠️ 离线，已排队")}};
 const pull=async u0=>{const u=u0||dRef.current.webhook;if(!u)return;setBusy(true);
-try{const q=dRef.current.outbox;for(const a of q)await call(u,a);
-const j=await pullCloud(u);if(!j.ok)throw new Error("x");
+let st="上传待传队列";try{const q=dRef.current.outbox;for(const a of q)await call(u,a);st="拉取数据";
+const j=await pullCloud(u);if(!j.ok)throw new Error(j.error||"服务端返回失败");st="初始化上传";
 if(!j.items.length&&!j.records.length&&dRef.current.items.length){await call(u,{action:"importAll",items:dRef.current.items,records:dRef.current.records});upd(p=>({outbox:p.outbox.slice(q.length)}))}
 else upd(p=>({items:j.items,records:j.records,outbox:p.outbox.slice(q.length)}));
-setCloud("☁️ 已同步 "+new Date().toTimeString().slice(0,5))}catch(e){setCloud("⚠️ 云端不可用，使用本地缓存")}setBusy(false)};
+setCloud("☁️ 已同步 "+new Date().toTimeString().slice(0,5))}catch(e){setCloud("⚠️ "+st+"失败："+(e.message||e))}setBusy(false)};
 useEffect(()=>{pull()},[tab]);
 const rec=(list,clear)=>{const recs=list.map(x=>({id:uid(),itemId:x.itemId,price:x.price,store:x.store||"未填",note:x.note||"",date:new Date().toISOString(),buyer:user}));
 upd(p=>({records:[...p.records,...recs],last:recs[recs.length-1].store,items:clear?p.items.map(i=>recs.some(r=>r.itemId===i.id)?{...i,oos:false}:i):p.items}));
