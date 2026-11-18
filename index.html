@@ -31,7 +31,8 @@ const {useState,useEffect,useRef}=React;
 const html=htm.bind((t,p,...c)=>{if(p&&p.class){p={...p,className:p.class};delete p.class}return React.createElement(t,p,...c)});
 const KEY="gt_v1",CATS=["生鲜蔬果","粮油调味","乳品烘焙","日用清洁","零食饮料"];
 const DEFAULT_URL="https://script.google.com/macros/s/AKfycbyYwD6f_I4sB-7y2Y9xfwAzvNgauJbF8yo2HWXL5pO9IW_OTd1-pHYv2zjus7qE6PLpGg/exec";
-const DEF={users:["Member 1","Member 2","Member 3"],userIdx:0,outbox:[]};
+const pad=u=>Array.from({length:4},(_,i)=>u[i]||"Member "+(i+1));
+const DEF={users:pad([]),userIdx:0,outbox:[]};
 const STORES=["Jaya Grocer","Village Grocer","Lotus’s","99 Speedmart","AEON"];
 const uid=()=>Math.random().toString(36).slice(2,9);
 const rm=n=>n==null?"—":"RM "+n.toFixed(2);
@@ -49,7 +50,7 @@ const S=[
 const items=[],records=[];
 S.forEach((s,k)=>{const id="s"+k;items.push({id,name:s[0],cat:s[1],spec:s[2],barcode:s[3],oos:!!s[4]});s[5].forEach((r,j)=>records.push({id:id+"r"+j,itemId:id,store:r[0],price:r[1],date:ago(r[2]),note:""}))});
 return{...DEF,items,records,trip:{},webhook:DEFAULT_URL,last:STORES[0]}}
-function load(){try{const s=localStorage.getItem(KEY);if(s){const o={...DEF,...JSON.parse(s)};if(!o.webhook)o.webhook=DEFAULT_URL;return o}}catch(e){}return seed()}
+function load(){try{const s=localStorage.getItem(KEY);if(s){const o={...DEF,...JSON.parse(s)};if(!o.webhook)o.webhook=DEFAULT_URL;o.users=pad(o.users);return o}}catch(e){}return seed()}
 function stats(id,recs){const r=recs.filter(x=>x.itemId===id);if(!r.length)return{n:0};
 const s=[...r].sort((a,b)=>b.date.localeCompare(a.date)),m=r.reduce((a,b)=>b.price<a.price?b:a);
 return{n:r.length,latest:s[0].price,avg:r.reduce((a,b)=>a+b.price,0)/r.length,min:m.price,minStore:m.store}}
@@ -142,7 +143,7 @@ return html`<div class="grid gap-3"><div class="font-bold text-lg">${f.id?"编�
 <div class="grid grid-cols-2 gap-2"><button class="btn2" onClick=${close}>取消</button><button class="btn" onClick=${save}>保存</button></div>
 ${f.id&&html`<button class="min-h-[44px] text-sm" style=${{color:"#dc2626"}} onClick=${()=>{if(dl){delItem(f.id);close();flash("已删除商品")}else setDl(true)}}>${dl?"确认删除（同时删除其购买记录）":"删除此商品"}</button>`}</div>`}
 
-function Settings({d,upd,close,flash,pull,cloud}){
+function Settings({d,upd,close,flash,pull,cloud,send}){
 const [u,setU]=useState(d.webhook||"");const [out,setOut]=useState("");const [diag,setDiag]=useState("");
 const em=e=>e.message+(/fetch|Load failed|Network/i.test(e.message)?"（被浏览器拦截：网络、跨域或权限）":"");
 const test=async()=>{const v=u.trim();if(!v)return flash("请先填写网址");let m="页面来源："+location.origin+"\n";setDiag("测试中…");
@@ -154,7 +155,7 @@ const csv=()=>["日期,物品,超市,单价RM,备注,购买人",...rows().map(r=
 const copy=()=>(navigator.clipboard?navigator.clipboard.writeText(out):Promise.reject()).then(()=>flash("已复制"),()=>flash("请长按文本框全选复制"));
 return html`<div class="grid gap-3"><div class="font-bold text-lg">设置 / 数据同步</div>
 <div class="font-semibold">当前操作人（可改名）</div>
-${d.users.map((n,i)=>html`<div key=${i} class="flex gap-2 items-center"><button onClick=${()=>upd(()=>({userIdx:i}))} class="shrink-0 grid place-items-center rounded-full" style=${{width:40,height:40,border:"2px solid var(--ac)",background:d.userIdx===i?"var(--ac)":"transparent",color:"var(--onac)"}}>${d.userIdx===i?"✓":""}</button><input class="inp" value=${n} onInput=${e=>upd(p=>({users:p.users.map((x,j)=>j===i?e.target.value:x)}))}/></div>`)}
+${d.users.map((n,i)=>html`<div key=${i} class="flex gap-2 items-center"><button onClick=${()=>upd(()=>({userIdx:i,meSet:true}))} class="shrink-0 grid place-items-center rounded-full" style=${{width:40,height:40,border:"2px solid var(--ac)",background:d.userIdx===i?"var(--ac)":"transparent",color:"var(--onac)"}}>${d.userIdx===i?"✓":""}</button><input class="inp" value=${n} onInput=${e=>upd(p=>({users:p.users.map((x,j)=>j===i?e.target.value:x)}))} onBlur=${()=>send({action:"saveUsers",users:d.users})}/></div>`)}
 <div class="text-sm mut">数据保存在本机浏览器。备份：生成后复制保存到备忘录或文件。</div>
 <div class="grid grid-cols-2 gap-2"><button class="btn2" onClick=${()=>setOut(JSON.stringify({items:d.items,records:d.records},null,1))}>导出 JSON</button><button class="btn2" onClick=${()=>setOut(csv())}>导出 CSV</button></div>
 ${out&&html`<textarea readOnly class="inp" style=${{height:130,padding:10}} value=${out} onFocus=${e=>e.target.select()}></textarea>`}
@@ -175,12 +176,13 @@ const upd=f=>setD(p=>({...p,...f(p)}));
 const flash=m=>{setToast(m);setTimeout(()=>setToast(""),2000)};
 const dRef=useRef(d);dRef.current=d;
 const user=d.users[d.userIdx]||"Member";
-const send=async a=>{const u=dRef.current.webhook;if(!u)return;try{await call(u,a)}catch(e){upd(p=>({outbox:[...p.outbox,a]}));setCloud("⚠️ 离线，已排队")}};
+const chain=useRef(Promise.resolve()),pend=useRef(0),hold=useRef(d.outbox.length>0);
+const send=a=>{const u=dRef.current.webhook;if(!u)return;pend.current++;chain.current=chain.current.then(()=>hold.current?Promise.reject(0):call(u,a)).catch(()=>{hold.current=true;upd(p=>({outbox:[...p.outbox,a]}));setCloud("⚠️ 离线，已排队")}).then(()=>{pend.current--})};
 const pull=async u0=>{const u=u0||dRef.current.webhook;if(!u)return;setBusy(true);
-let st="上传待传队列";try{const q=dRef.current.outbox;for(const a of q)await call(u,a);st="拉取数据";
-const j=await pullCloud(u);if(!j.ok)throw new Error(j.error||"服务端返回失败");st="初始化上传";
+let st="上传待传队列";try{await chain.current;const q=dRef.current.outbox;for(const a of q)await call(u,a);hold.current=false;st="拉取数据";
+const j=await pullCloud(u);if(!j.ok)throw new Error(j.error||"服务端返回失败");st="初始化上传";const cu=j.users&&j.users.length?pad(j.users):null;if(!cu||j.users.length<4)await call(u,{action:"saveUsers",users:cu||pad(dRef.current.users)});
 if(!j.items.length&&!j.records.length&&dRef.current.items.length){await call(u,{action:"importAll",items:dRef.current.items,records:dRef.current.records});upd(p=>({outbox:p.outbox.slice(q.length)}))}
-else upd(p=>({items:j.items,records:j.records,outbox:p.outbox.slice(q.length)}));
+else if(!pend.current)upd(p=>({items:j.items,records:j.records,users:cu||p.users,outbox:p.outbox.slice(q.length)}));
 setCloud("☁️ 已同步 "+new Date().toTimeString().slice(0,5))}catch(e){setCloud("⚠️ "+st+"失败："+(e.message||e))}setBusy(false)};
 useEffect(()=>{pull()},[tab]);
 const rec=(list,clear)=>{const recs=list.map(x=>({id:uid(),itemId:x.itemId,price:x.price,store:x.store||"未填",note:x.note||"",date:new Date().toISOString(),buyer:user}));
@@ -197,7 +199,8 @@ return html`<div class="flex flex-col h-full max-w-md mx-auto">
 <header class="flex items-center justify-between px-4 py-2"><div class="min-w-0" onClick=${()=>setModal({t:"set"})}><h1 class="text-lg font-bold">${TABS[tab][0]} ${TABS[tab][1]}</h1><div class="text-xs mut truncate">👤 ${user} · ${d.webhook?(cloud||"☁️ 连接中…"):"未连接云端"}${d.outbox.length?" · 待传 "+d.outbox.length:""}</div></div><div class="flex shrink-0"><button class=${"text-2xl"+(busy?" animate-spin":"")} style=${{width:44,height:44}} aria-label="云端刷新" onClick=${()=>pull()}>🔄</button><button class="text-2xl" style=${{width:44,height:44}} aria-label="设置" onClick=${()=>setModal({t:"set"})}>⚙️</button></div></header>
 <main class="flex-1 overflow-y-auto px-4 pb-4">${tab===0&&html`<${List} ...${P}/>`}${tab===1&&html`<${Scan} ...${P}/>`}${tab===2&&html`<${ItemsTab} ...${P}/>`}${tab===3&&html`<${Hist} ...${P}/>`}</main>
 <nav class="grid grid-cols-4" style=${{borderTop:"1px solid var(--bd)",background:"var(--card)"}}>${TABS.map((t,i)=>html`<button key=${i} onClick=${()=>setTab(i)} class="flex flex-col items-center justify-center relative" style=${{height:64,color:tab===i?"var(--ac)":"var(--mut)",fontWeight:tab===i?700:400}}><span class="text-2xl leading-none">${t[0]}</span><span class="text-xs mt-1">${t[1]}</span>${i===0&&cnt>0&&html`<span class="absolute rounded-full text-xs px-1.5" style=${{top:6,right:"22%",background:"#dc2626",color:"#fff"}}>${cnt}</span>`}</button>`)}</nav>
-${modal&&html`<${Modal} close=${()=>setModal(null)}>${modal.t==="item"?html`<${ItemForm} init=${modal.init} saveItem=${saveItem} delItem=${delItem} flash=${flash} close=${()=>setModal(null)}/>`:html`<${Settings} d=${d} upd=${upd} flash=${flash} pull=${pull} cloud=${cloud} close=${()=>setModal(null)}/>`}<//>`}
+${modal&&html`<${Modal} close=${()=>setModal(null)}>${modal.t==="item"?html`<${ItemForm} init=${modal.init} saveItem=${saveItem} delItem=${delItem} flash=${flash} close=${()=>setModal(null)}/>`:html`<${Settings} d=${d} upd=${upd} flash=${flash} pull=${pull} cloud=${cloud} send=${send} close=${()=>setModal(null)}/>`}<//>`}
+${!d.meSet&&!modal&&html`<${Modal} close=${()=>{}}><div class="grid gap-3"><div class="font-bold text-lg">你是谁？</div><div class="text-sm mut">每台手机选一次，之后的购买记录会记在你名下。</div>${d.users.map((n,i)=>html`<button key=${i} class="btn" onClick=${()=>upd(()=>({userIdx:i,meSet:true}))}>${n}</button>`)}</div><//>`}
 ${toast&&html`<div class="fixed left-1/2 z-30 px-4 py-2 rounded-full text-sm" style=${{transform:"translateX(-50%)",bottom:"calc(84px + env(safe-area-inset-bottom,0px))",background:"var(--tx)",color:"var(--bg)"}}>${toast}</div>`}</div>`}
 ReactDOM.createRoot(document.getElementById("root")).render(html`<${App}/>`);
 </script>
