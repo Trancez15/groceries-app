@@ -53,7 +53,7 @@ function load(){try{const s=localStorage.getItem(KEY);if(s){const o={...DEF,...J
 function stats(id,recs){const r=recs.filter(x=>x.itemId===id);if(!r.length)return{n:0};
 const s=[...r].sort((a,b)=>b.date.localeCompare(a.date)),m=r.reduce((a,b)=>b.price<a.price?b:a);
 return{n:r.length,latest:s[0].price,avg:r.reduce((a,b)=>a+b.price,0)/r.length,min:m.price,minStore:m.store}}
-async function call(u,b){const r=await fetch(u,{method:"POST",redirect:"follow",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(b)});const t=await r.text();let j;try{j=JSON.parse(t)}catch(e){throw new Error("POST 返回的不是 JSON："+t.replace(/\s+/g," ").slice(0,60))}if(!j.ok)throw new Error("服务端："+(j.error||"失败"));return j}
+async function call(u,b){await fetch(u,{method:"POST",mode:"no-cors",redirect:"follow",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(b)})}
 async function pullCloud(u){const r=await fetch(u+(u.includes("?")?"&":"?")+"action=pull&t="+Date.now(),{redirect:"follow"});const t=await r.text();try{return JSON.parse(t)}catch(e){throw new Error("GET 返回的不是 JSON："+t.replace(/\s+/g," ").slice(0,60))}}
 
 const St=({l,v})=>html`<div class="text-center"><div class="text-xs mut">${l}</div><div class="font-bold text-sm">${v}</div></div>`;
@@ -147,7 +147,7 @@ const [u,setU]=useState(d.webhook||"");const [out,setOut]=useState("");const [di
 const em=e=>e.message+(/fetch|Load failed|Network/i.test(e.message)?"（被浏览器拦截：网络、跨域或权限）":"");
 const test=async()=>{const v=u.trim();if(!v)return flash("请先填写网址");let m="页面来源："+location.origin+"\n";setDiag("测试中…");
 try{const j=await pullCloud(v);m+="GET ✅ 物品 "+j.items.length+" · 记录 "+j.records.length+"\n"}catch(e){m+="GET ❌ "+em(e)+"\n"}
-try{await call(v,{action:"ping"})}catch(e){m+=e.message.startsWith("服务端")?"POST ✅ 可达（"+e.message+"）":"POST ❌ "+em(e)}
+try{await call(v,{action:"ping"});m+="POST ✅ 已发送（回应不可读属正常）"}catch(e){m+="POST ❌ "+em(e)}
 setDiag(m)};
 const rows=()=>d.records.map(r=>({date:r.date.slice(0,10),item:(d.items.find(i=>i.id===r.itemId)||{}).name||"",store:r.store,price:r.price,note:r.note||"",buyer:r.buyer||""}));
 const csv=()=>["日期,物品,超市,单价RM,备注,购买人",...rows().map(r=>[r.date,r.item,r.store,r.price,r.note,r.buyer].map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(","))].join("\n");
