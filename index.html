@@ -36,6 +36,8 @@ const padE=u=>Array.from({length:4},(_,i)=>u[i]||"");
 const DEF={users:pad([]),emails:padE([]),cats:[...CATS],userIdx:0,outbox:[]};
 const STORES=["Jaya Grocer","Village Grocer","Lotus’s","99 Speedmart","AEON"];
 const uid=()=>Math.random().toString(36).slice(2,9);
+const nextId=items=>"I"+String(items.reduce((m,i)=>{const x=/^I(\d+)$/.exec(i.id);return x?Math.max(m,+x[1]):m},0)+1).padStart(3,"0");
+const rid=()=>"R"+new Date().toISOString().replace(/\D/g,"").slice(2,14)+Math.random().toString(36).slice(2,5);
 const rm=n=>n==null?"—":"RM "+n.toFixed(2);
 const ago=n=>new Date(Date.now()-n*864e5).toISOString();
 function seed(){
@@ -203,21 +205,26 @@ const upd=f=>setD(p=>({...p,...f(p)}));
 const flash=m=>{setToast(m);setTimeout(()=>setToast(""),2000)};
 const dRef=useRef(d);dRef.current=d;
 const user=d.users[d.userIdx]||"Member";
-const chain=useRef(Promise.resolve()),pend=useRef(0),hold=useRef(d.outbox.length>0);
-const send=a=>{const u=dRef.current.webhook;if(!u)return;pend.current++;chain.current=chain.current.then(()=>hold.current?Promise.reject(0):call(u,a)).catch(()=>{hold.current=true;upd(p=>({outbox:[...p.outbox,a]}));setCloud("⚠️ 离线，已排队")}).then(()=>{pend.current--})};
-const pull=async u0=>{const u=u0||dRef.current.webhook;if(!u)return;setBusy(true);
-let st="上传待传队列";try{await chain.current;const q=dRef.current.outbox;for(const a of q)await call(u,a);hold.current=false;st="拉取数据";
+const chain=useRef(Promise.resolve()),pend=useRef(0),hold=useRef(d.outbox.length>0),rt=useRef(0),lk=useRef(false),unc=useRef({});
+const kick=ms=>{clearTimeout(rt.current);rt.current=setTimeout(()=>pull(),ms||3000)};
+const send=a=>{const u=dRef.current.webhook;if(!u)return;pend.current++;chain.current=chain.current.then(()=>hold.current?Promise.reject(0):call(u,a)).catch(()=>{hold.current=true;kick();upd(p=>({outbox:[...p.outbox,a]}));setCloud("⚠️ 离线，已排队")}).then(()=>{pend.current--})};
+const pull=async u0=>{const u=u0||dRef.current.webhook;if(!u||lk.current)return;lk.current=true;setBusy(true);
+let warn="",st="上传待传队列";try{await chain.current;const q=dRef.current.outbox;for(const a of q)await call(u,a);hold.current=false;st="拉取数据";
 const j=await pullCloud(u);if(!j.ok)throw new Error(j.error||"服务端返回失败");st="初始化上传";const cu=j.users&&j.users.length?pad(j.users):null,ce=j.emails&&j.emails.length?padE(j.emails):null;const cc=j.cats&&j.cats.length?j.cats:null;if(j.cats&&!cc)await call(u,{action:"saveCats",cats:dRef.current.cats});if(!cu||j.users.length<4||!j.emails)await call(u,{action:"saveUsers",users:cu||pad(dRef.current.users),emails:ce||padE(dRef.current.emails)});
 if(!j.items.length&&!j.records.length&&dRef.current.items.length){await call(u,{action:"importAll",items:dRef.current.items,records:dRef.current.records});upd(p=>({outbox:p.outbox.slice(q.length)}))}
-else if(!pend.current)upd(p=>({items:j.items,records:j.records,users:cu||p.users,emails:ce||p.emails,cats:cc||p.cats,outbox:p.outbox.slice(q.length)}));
-setCloud("☁️ 已同步 "+new Date().toTimeString().slice(0,5))}catch(e){setCloud("⚠️ "+st+"失败："+(e.message||e))}setBusy(false)};
+else if(!pend.current){const miss=Object.values(unc.current).filter(a=>!j.items.some(x=>x.id===a.item.id||(x.name===a.item.name&&(x.barcode||"")===(a.item.barcode||"")))).map(a=>({...a,tries:(a.tries||0)+1})),again=miss.filter(a=>a.tries<3);
+unc.current=Object.fromEntries(again.map(a=>[a.item.id,a]));if(again.length){hold.current=true;kick(8000)}
+upd(p=>({items:[...j.items,...p.items.filter(x=>miss.some(m=>m.item.id===x.id))],records:j.records,users:cu||p.users,emails:ce||p.emails,cats:cc||p.cats,outbox:[...p.outbox.slice(q.length),...again]}));
+warn=miss.length?(again.length?"⚠️ 「"+miss[0].item.name+"」云端未收到，正在重试":"⚠️ 「"+miss[0].item.name+"」多次未写入云端，请看 Log 工作表"):""}
+setCloud("☁️ 已同步 "+new Date().toTimeString().slice(0,5));if(warn)setCloud(warn)}catch(e){setCloud("⚠️ "+st+"失败："+(e.message||e));if(dRef.current.outbox.length)kick(15000)}lk.current=false;setBusy(false)};
 useEffect(()=>{pull()},[tab]);
-const rec=(list,clear)=>{const recs=list.map(x=>({id:uid(),itemId:x.itemId,price:x.price,qty:x.qty||1,store:x.store||"未填",note:x.note||"",date:new Date().toISOString(),buyer:user}));
+useEffect(()=>{const f=()=>{if(!document.hidden)pull()};document.addEventListener("visibilitychange",f);return()=>document.removeEventListener("visibilitychange",f)},[]);
+const rec=(list,clear)=>{const recs=list.map(x=>({id:rid(),itemId:x.itemId,price:x.price,qty:x.qty||1,store:x.store||"未填",note:x.note||"",date:new Date().toISOString(),buyer:user}));
 upd(p=>({records:[...p.records,...recs],last:recs[recs.length-1].store,items:clear?p.items.map(i=>recs.some(r=>r.itemId===i.id)?{...i,oos:false}:i):p.items}));
 send({action:clear?"completePurchase":"addRecord",clearStock:!!clear,records:recs.map(r=>({...r,itemName:(d.items.find(i=>i.id===r.itemId)||{}).name||""}))})};
 const toggle=id=>{const i=d.items.find(x=>x.id===id);if(!i)return;upd(p=>({items:p.items.map(x=>x.id===id?{...x,oos:!i.oos}:x)}));send({action:"toggleStock",id,oos:!i.oos,by:user})};
-const saveItem=it=>{const o=d.items.find(x=>x.id===it.id);const n={id:it.id||uid(),name:it.name,cat:it.cat,spec:it.spec||"",barcode:it.barcode||"",photo:it.photo||"",oos:o?o.oos:false};
-upd(p=>({items:o?p.items.map(x=>x.id===n.id?{...x,...n}:x):[...p.items,n]}));send({action:"saveItem",item:n,by:user})};
+const saveItem=it=>{const o=d.items.find(x=>x.id===it.id);const n={id:it.id||nextId(d.items),name:it.name,cat:it.cat,spec:it.spec||"",barcode:it.barcode||"",photo:it.photo||"",oos:o?o.oos:false};
+upd(p=>({items:o?p.items.map(x=>x.id===n.id?{...x,...n}:x):[...p.items,n]}));const act={action:"saveItem",item:n,by:user,isNew:!o};if(!o)unc.current[n.id]=act;send(act);kick(2500)};
 const delItem=id=>{upd(p=>({items:p.items.filter(x=>x.id!==id),records:p.records.filter(x=>x.itemId!==id)}));send({action:"deleteItem",id})};
 const delRec=id=>{upd(p=>({records:p.records.filter(x=>x.id!==id)}));send({action:"deleteRecord",id})};
 const setCats=(cats,rename)=>{upd(p=>({cats,items:rename?p.items.map(x=>x.cat===rename.from?{...x,cat:rename.to}:x):p.items}));send({action:"saveCats",cats,rename})};
